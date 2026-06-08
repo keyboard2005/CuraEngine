@@ -113,6 +113,7 @@ set(engine_SRCS # Except main.cpp.
         src/infill/SubDivCube.cpp
         src/infill/GyroidInfill.cpp
         src/infill/SpiralFill.cpp
+        src/infill/TrussFill.cpp
 
         src/pathPlanning/Comb.cpp
         src/pathPlanning/GCodePath.cpp

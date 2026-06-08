@@ -16,6 +16,7 @@
 #include "geometry/PointMatrix.h"
 #include "infill/GyroidInfill.h"
 #include "infill/SpiralFill.h"
+#include "infill/TrussFill.h"
 #include "infill/ImageBasedDensityProvider.h"
 #include "infill/LightningGenerator.h"
 #include "infill/NoZigZagConnectorProcessor.h"
@@ -319,6 +320,9 @@ void Infill::_generate(
         break;
     case EFillMethod::SPIRAL:
         SpiralFill::generateSpiralInfill(result_lines, line_distance_, inner_contour_);
+        break;
+    case EFillMethod::TRUSS:
+        TrussFill::generateTrussInfill(result_lines, line_distance_, inner_contour_, fill_angle_, false);
         break;
     case EFillMethod::PLUGIN:
     {
