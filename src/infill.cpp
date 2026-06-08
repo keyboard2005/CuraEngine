@@ -322,8 +322,14 @@ void Infill::_generate(
         SpiralFill::generateSpiralInfill(result_lines, line_distance_, inner_contour_);
         break;
     case EFillMethod::TRUSS:
-        TrussFill::generateTrussInfill(result_lines, line_distance_, inner_contour_, fill_angle_, false);
+    {
+        // Use the exact same scanline shift as the zig-zag infill so the truss
+        // lands on the identical absolute grid (and thus the same XY on every
+        // layer): infill-origin offset + the global shift, like generateLinearBasedInfill.
+        const coord_t truss_shift = getShiftOffsetFromInfillOriginAndRotation(fill_angle_) + shift_;
+        TrussFill::generateTrussInfill(result_lines, line_distance_, inner_contour_, fill_angle_, truss_shift, false);
         break;
+    }
     case EFillMethod::PLUGIN:
     {
 #ifdef ENABLE_PLUGINS // FIXME: I don't like this conditional block outside of the plugin scope.

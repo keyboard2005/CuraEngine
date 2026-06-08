@@ -15,16 +15,20 @@ class Shape;
 /*!
  * \brief Triangular truss infill pattern.
  *
- * Generates a continuous zig-zag where each apex lands on the wall of the fill
- * area, forming a row of triangles. This is the lightweight-yet-stiff lattice
- * commonly used in concrete / large-format printing: little material, high
- * structural strength.
+ * A single zig-zag that runs along the fill direction (a frame rotated by
+ * \p fill_angle), with the triangle tips landing on the walls. This is the
+ * lightweight-yet-stiff structure commonly used in concrete / large-format
+ * printing: little material, high strength, continuous extrusion.
  *
- * The algorithm scans vertical columns (in a frame rotated by \p fill_angle).
- * For every column it takes the top/bottom boundary of the region and places an
- * apex there, alternating between top and bottom. Consecutive apexes are joined
- * by sloped segments, so the triangle tips naturally touch the walls. Columns
- * that fall outside the region (gaps / holes) break the polyline.
+ * The scanline grid is computed *exactly* like the built-in zig-zag infill:
+ * apexes sit at <tt>scanline_index * line_distance + pattern_shift</tt> in the
+ * rotated frame, with \p pattern_shift carrying the infill-origin offset. Using
+ * the same absolute grid as zig-zag means the truss lands on identical positions
+ * on every layer, so the webs stack vertically just like zig-zag does.
+ *
+ * The amplitude of each column follows the local height of the region at that
+ * column, and the finished zig-zag is clipped to the real contour, so interior
+ * cut-outs are not bridged.
  */
 class TrussFill
 {
@@ -33,14 +37,17 @@ public:
      * \brief Generate truss infill lines within the given outline.
      *
      * \param result_lines   Output: the truss polylines (open line segments).
-     * \param line_distance  Horizontal spacing between consecutive apexes (µm).
-     *                       The triangle base equals twice this value.
+     * \param line_distance  Spacing between consecutive apexes (µm). The triangle
+     *                       base equals twice this value.
      * \param in_outline     The fill area (already offset by wall count etc.).
-     * \param fill_angle     Orientation of the truss rows, in degrees.
-     * \param mirror         When true, start from the opposite side so that the
-     *                       pattern alternates between layers for cross-bracing.
+     * \param fill_angle     Orientation of the truss, in degrees.
+     * \param pattern_shift  The scanline shift (infill-origin offset + global
+     *                       shift), exactly as passed to the zig-zag infill, so
+     *                       the truss aligns with the same absolute grid.
+     * \param mirror         When true, flip the starting side so the pattern can
+     *                       alternate between layers for cross-bracing.
      */
-    static void generateTrussInfill(OpenLinesSet& result_lines, coord_t line_distance, const Shape& in_outline, double fill_angle, bool mirror);
+    static void generateTrussInfill(OpenLinesSet& result_lines, coord_t line_distance, const Shape& in_outline, double fill_angle, coord_t pattern_shift, bool mirror);
 };
 
 } // namespace cura
