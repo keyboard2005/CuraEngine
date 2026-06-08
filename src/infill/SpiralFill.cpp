@@ -23,14 +23,23 @@ void SpiralFill::generateSpiralInfill(OpenLinesSet& result_lines, coord_t line_d
 
     // --- Bounding box & center ---
     const AABB aabb(in_outline);
-    const double cx = static_cast<double>(aabb.min_.X + aabb.max_.X) / 2.0;
-    const double cy = static_cast<double>(aabb.min_.Y + aabb.max_.Y) / 2.0;
 
-    // Maximum radius: distance from center to the farthest corner, with a 5% margin
-    // so the spiral reaches all corners.
-    const double dx = static_cast<double>(aabb.max_.X - aabb.min_.X) / 2.0;
-    const double dy = static_cast<double>(aabb.max_.Y - aabb.min_.Y) / 2.0;
-    const double max_radius = std::hypot(dx, dy) * 1.05;
+    // Anchor the spiral center to an absolute grid (multiples of line_distance)
+    // rather than the per-layer bounding-box center. This keeps the spiral at the
+    // exact same position on every layer - even when the cross-section changes -
+    // so the arms stack into continuous vertical webs, like the built-in infills.
+    const double raw_cx = static_cast<double>(aabb.min_.X + aabb.max_.X) / 2.0;
+    const double raw_cy = static_cast<double>(aabb.min_.Y + aabb.max_.Y) / 2.0;
+    const double cx = std::round(raw_cx / static_cast<double>(line_distance)) * static_cast<double>(line_distance);
+    const double cy = std::round(raw_cy / static_cast<double>(line_distance)) * static_cast<double>(line_distance);
+
+    // Maximum radius: distance from the (snapped) center to the farthest corner,
+    // with a 5% margin so the spiral always reaches every corner.
+    const double max_radius = std::max({ std::hypot(static_cast<double>(aabb.min_.X) - cx, static_cast<double>(aabb.min_.Y) - cy),
+                                         std::hypot(static_cast<double>(aabb.max_.X) - cx, static_cast<double>(aabb.min_.Y) - cy),
+                                         std::hypot(static_cast<double>(aabb.min_.X) - cx, static_cast<double>(aabb.max_.Y) - cy),
+                                         std::hypot(static_cast<double>(aabb.max_.X) - cx, static_cast<double>(aabb.max_.Y) - cy) })
+                            * 1.05;
 
     if (max_radius < 1.0)
     {

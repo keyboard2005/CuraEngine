@@ -3,6 +3,8 @@
 
 #include "infill/TrussFill.h"
 
+#include <cmath>
+
 #include "geometry/OpenPolyline.h"
 #include "geometry/PointMatrix.h"
 #include "geometry/Shape.h"
@@ -46,7 +48,13 @@ void TrussFill::generateTrussInfill(OpenLinesSet& result_lines, coord_t line_dis
     OpenPolyline wave;
     bool up = ! mirror; // mirror flips the starting side so layers can cross-brace
 
-    coord_t x = min_x;
+    // Anchor the apexes to an absolute grid (multiples of line_distance) instead
+    // of the per-layer bounding box, so the truss lands on the exact same X
+    // positions on every layer and stacks into continuous vertical webs - the
+    // same trick the built-in linear infills use for layer-to-layer alignment.
+    // We start one grid step before min_x so the first apex sits outside the
+    // outline and the clipped segment still reaches the near wall.
+    coord_t x = static_cast<coord_t>(std::floor(static_cast<double>(min_x) / static_cast<double>(line_distance))) * line_distance - line_distance;
     while (true)
     {
         wave.emplace_back(x, up ? max_y : min_y);
@@ -56,10 +64,6 @@ void TrussFill::generateTrussInfill(OpenLinesSet& result_lines, coord_t line_dis
             break;
         }
         x += line_distance;
-        if (x > max_x)
-        {
-            x = max_x; // make sure the last apex lands exactly on the far edge
-        }
     }
 
     OpenLinesSet wave_set;
