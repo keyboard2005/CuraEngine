@@ -15,6 +15,7 @@
 #include "geometry/OpenPolyline.h"
 #include "geometry/PointMatrix.h"
 #include "infill/GyroidInfill.h"
+#include "infill/SpiralFill.h"
 #include "infill/ImageBasedDensityProvider.h"
 #include "infill/LightningGenerator.h"
 #include "infill/NoZigZagConnectorProcessor.h"
@@ -315,6 +316,9 @@ void Infill::_generate(
     case EFillMethod::LIGHTNING:
         assert(lightning_trees); // "Cannot generate Lightning infill without a generator!\n"
         generateLightningInfill(lightning_trees, result_lines);
+        break;
+    case EFillMethod::SPIRAL:
+        SpiralFill::generateSpiralInfill(result_lines, line_distance_, inner_contour_);
         break;
     case EFillMethod::PLUGIN:
     {

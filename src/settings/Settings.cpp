@@ -431,6 +431,8 @@ EFillMethod Settings::get<EFillMethod>(const std::string& key) const
         return EFillMethod::GYROID;
     case "lightning"_sw:
         return EFillMethod::LIGHTNING;
+    case "spiral"_sw:
+        return EFillMethod::SPIRAL;
     case "plugin"_sw:
         return EFillMethod::PLUGIN;
     default:
