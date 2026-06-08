@@ -110,27 +110,49 @@ void TrussFill::generateTrussInfill(OpenLinesSet& result_lines, coord_t line_dis
     // scanline index, so it is identical on every layer. Columns with no material
     // break the polyline.
     OpenLinesSet pattern;
-    OpenPolyline wave;
+    std::vector<Point2LL> run; // apexes of the current uninterrupted run
+
+    // Flush the current run as one zig-zag polyline. Before doing so, lock the
+    // angle of the FIRST and LAST strut to the interior rhythm: a boundary column
+    // only ever has a partial (clipped) local height, and as the contour edge
+    // sweeps across the fixed column grid that partial height - and therefore the
+    // end-strut angle - jumps from layer to layer. We avoid that by snapping the
+    // outermost apex onto the same Y as the apex two columns inward (its same-side
+    // neighbour in the zig-zag). That makes the end strut an exact mirror of the
+    // adjacent interior strut, so its angle matches the interior and stays stable
+    // across layers; the final contour clip then only changes its *length*.
+    const auto flush_run = [&]()
+    {
+        if (run.size() >= 3)
+        {
+            run.front().Y = run[2].Y;
+            run.back().Y = run[run.size() - 3].Y;
+        }
+        if (run.size() >= 2)
+        {
+            OpenPolyline wave;
+            for (const Point2LL& apex : run)
+            {
+                wave.push_back(apex);
+            }
+            pattern.push_back(std::move(wave));
+        }
+        run.clear();
+    };
+
     for (const auto& [x, idx] : columns)
     {
         const auto it = extents.find(x);
         if (it == extents.end())
         {
-            if (wave.size() >= 2)
-            {
-                pattern.push_back(std::move(wave));
-            }
-            wave.clear();
+            flush_run();
             continue;
         }
         const bool up = ((((idx % 2) + 2) % 2) == 0) != mirror;
         const coord_t y = up ? it->second.second : it->second.first;
-        wave.emplace_back(x, y);
+        run.emplace_back(x, y);
     }
-    if (wave.size() >= 2)
-    {
-        pattern.push_back(std::move(wave));
-    }
+    flush_run();
 
     // Clip the zig-zag to the real contour: trims the diagonals at the walls and
     // removes any parts that would bridge across an interior cut-out.
