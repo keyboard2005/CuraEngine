@@ -136,16 +136,30 @@ void TrussFill::generateTrussInfill(OpenLinesSet& result_lines, coord_t line_dis
     // removes any parts that would bridge across an interior cut-out.
     const OpenLinesSet clipped = outline.intersection(pattern, /*restitch=*/true);
 
-    // Undo the rotation to bring the lines back into the original coordinate frame.
+    // Emit the result as individual line segments, exactly like the "lines" infill
+    // (SpaceFillType::Lines) does - rather than one long connected polyline. This
+    // lets the path optimiser order them with its boustrophedon strategy, so the
+    // print start/end no longer flips between layers (a single long polyline would
+    // be entered from whichever of its two ends is nearest, alternating per layer).
+    // Adjacent diagonals share their apex point, so the optimiser still chains them
+    // with (near) zero travel, keeping the extrusion continuous.
     for (const OpenPolyline& segment : clipped)
     {
-        OpenPolyline unrotated;
-        unrotated.reserve(segment.size());
+        bool has_prev = false;
+        Point2LL prev;
         for (const Point2LL& point : segment)
         {
-            unrotated.push_back(rotation_matrix.unapply(point));
+            const Point2LL current = rotation_matrix.unapply(point);
+            if (has_prev && current != prev)
+            {
+                OpenPolyline line;
+                line.push_back(prev);
+                line.push_back(current);
+                result_lines.push_back(std::move(line));
+            }
+            prev = current;
+            has_prev = true;
         }
-        result_lines.push_back(std::move(unrotated));
     }
 }
 

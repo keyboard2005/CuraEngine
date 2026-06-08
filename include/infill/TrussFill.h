@@ -29,6 +29,13 @@ class Shape;
  * The amplitude of each column follows the local height of the region at that
  * column, and the finished zig-zag is clipped to the real contour, so interior
  * cut-outs are not bridged.
+ *
+ * The pattern is emitted as individual line segments (like the "lines" infill,
+ * SpaceFillType::Lines) instead of one long connected polyline. This makes the
+ * downstream path ordering behave exactly like "lines": the print start/end is
+ * stable from layer to layer, instead of flipping between the two ends of a
+ * single long path. Adjacent diagonals share their apex point, so the optimiser
+ * still chains them with (near) zero travel.
  */
 class TrussFill
 {
