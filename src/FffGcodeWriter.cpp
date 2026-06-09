@@ -524,28 +524,28 @@ void FffGcodeWriter::computeTrussInfillTemplate(SliceMeshStorage& mesh)
         return;
     }
 
-    // Find the layer with the largest total infill area. That one becomes the
-    // complete saw-tooth template; every other layer clips a subset of it.
-    double best_area = 0.0;
+    // Build a composite "envelope" outline from ALL layers instead of picking a
+    // single layer: a single layer being largest in total area does not mean it
+    // reaches the furthest wall in every vertical column. By taking the union of
+    // every layer's infill area, generateTemplate's per-column (min Y, max Y)
+    // probe yields, for each column, the furthest extent any layer has there.
+    // The template apex then always reaches the outermost wall, so no layer ends
+    // up with a triangle tip stranded far from its own wall after clipping.
     Shape template_outline;
     for (const SliceLayer& layer : mesh.layers)
     {
-        Shape layer_infill;
         for (const SliceLayerPart& part : layer.parts)
         {
-            layer_infill.push_back(part.getOwnInfillArea());
-        }
-        if (layer_infill.empty())
-        {
-            continue;
-        }
-        const double area = std::abs(layer_infill.area());
-        if (area > best_area)
-        {
-            best_area = area;
-            template_outline = std::move(layer_infill);
+            template_outline.push_back(part.getOwnInfillArea());
         }
     }
+    if (template_outline.empty())
+    {
+        return;
+    }
+    // Union is required: stacking overlapping layers as raw polygons would make
+    // the even-odd fill rule cancel the overlaps into holes during probing.
+    template_outline = template_outline.unionPolygons();
     if (template_outline.empty())
     {
         return;

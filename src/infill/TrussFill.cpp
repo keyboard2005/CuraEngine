@@ -66,9 +66,10 @@ OpenLinesSet TrussFill::generateTemplate(coord_t line_distance, const Shape& tem
     // One zig-zag row that spans the full height of the template region. The apex
     // X-columns are anchored to the absolute grid (col * line_distance + shift),
     // and the apex Y is locked to the local top/bottom of the template contour at
-    // each column, so a single row always fills the whole height. Because this is
-    // built only once (from the largest layer) and then re-used on every layer,
-    // the apex geometry is identical from layer to layer.
+    // each column, so a single row always fills the whole height. The template
+    // contour is the cross-layer envelope, so each column's extent is the furthest
+    // any layer reaches there. Because this is built only once and then re-used on
+    // every layer, the apex geometry is identical from layer to layer.
 
     const int col_min = computeScanSegmentIdx(boundary.min_.X - shift, line_distance);
     const int col_max = computeScanSegmentIdx(boundary.max_.X - shift, line_distance) + 1;

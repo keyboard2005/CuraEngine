@@ -21,14 +21,18 @@ class Shape;
  * /\/\/\ saw-tooth that fills the whole height with very little material.
  *
  * Layer alignment - the important part:
- * The whole pattern is built ONCE from a single template outline (the layer with
- * the largest cross-section, see \ref generateTemplate) and stored in world
- * coordinates. Every individual layer then merely clips that one shared template
- * to its own contour (\ref clipToOutline). Because all layers share the exact
- * same apex geometry, the triangles line up perfectly from layer to layer; the
- * template layer prints the complete, fully-connected saw-tooth and every other
- * (smaller) layer prints a subset of it. The triangles of the smaller layers do
- * not need to stay fully connected - only the template layer does.
+ * The whole pattern is built ONCE from a single template outline - the
+ * cross-layer envelope (union of every layer's infill area), see \ref
+ * generateTemplate - and stored in world coordinates. Every individual layer
+ * then merely clips that one shared template to its own contour (\ref
+ * clipToOutline). Because all layers share the exact same apex geometry, the
+ * triangles line up perfectly from layer to layer; the envelope template is the
+ * complete, fully-connected saw-tooth and every individual layer prints a subset
+ * of it. Building the template from the envelope (rather than a single "largest"
+ * layer) guarantees that, in every vertical column, the apex reaches the furthest
+ * wall any layer has there, so no layer is left with a triangle tip stranded far
+ * from its wall. The triangles of the individual layers do not need to stay fully
+ * connected - only the envelope template does.
  *
  * The pattern is emitted as individual line segments (like the "lines" infill,
  * SpaceFillType::Lines) instead of one long connected polyline, so the
@@ -53,7 +57,8 @@ public:
      *                        triangle base equals twice this value, so the
      *                        triangle width scales with the infill density.
      * \param template_outline The outline to build the full template from
-     *                        (typically the largest layer's infill region).
+     *                        (typically the cross-layer envelope: the union of
+     *                        every layer's infill region).
      * \param fill_angle      Orientation of the truss, in degrees.
      * \param pattern_shift   The scanline shift (infill-origin offset + global
      *                        shift), exactly as the zig-zag infill uses it, so

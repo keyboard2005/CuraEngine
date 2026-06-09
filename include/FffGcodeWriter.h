@@ -191,11 +191,14 @@ private:
     /*!
      * Pre-compute the shared saw-tooth template for TRUSS infill.
      *
-     * Finds the layer with the largest infill cross-section and builds one
-     * complete triangular saw-tooth from it (in world coordinates). Every layer
-     * later clips this single template to its own contour, so the triangles line
-     * up perfectly from layer to layer and only the template layer needs to be
-     * fully connected. Does nothing when the infill pattern isn't TRUSS.
+     * Builds one complete triangular saw-tooth (in world coordinates) from the
+     * cross-layer envelope - the union of every layer's infill area - so that in
+     * every vertical column the template reaches the furthest wall any layer has
+     * there. Every layer later clips this single template to its own contour, so
+     * the triangles line up perfectly from layer to layer and no layer ends up
+     * with a triangle tip stranded far from its wall. Only the template (the full
+     * envelope) needs to be fully connected. Does nothing when the infill pattern
+     * isn't TRUSS.
      *
      * \param mesh The mesh for which to compute the truss template.
      */
