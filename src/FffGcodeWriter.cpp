@@ -524,36 +524,28 @@ void FffGcodeWriter::computeTrussInfillTemplate(SliceMeshStorage& mesh)
         return;
     }
 
-    // Build a composite "envelope" outline from ALL layers instead of picking a
-    // single layer: a single layer being largest in total area does not mean it
-    // reaches the furthest wall in every vertical column. By taking the union of
-    // every layer's infill area, generateTemplate's per-column (min Y, max Y)
-    // probe yields, for each column, the furthest extent any layer has there.
-    // The template apex then always reaches the outermost wall, so no layer ends
-    // up with a triangle tip stranded far from its own wall after clipping.
-    Shape template_outline;
+    // Collect every layer's infill area into one outline. The template only needs
+    // this as a bounding box (the cross-layer envelope), so a plain collection is
+    // enough - no (expensive) polygon union is required. Sizing the wave from the
+    // envelope guarantees the single shared template covers every layer, so each
+    // layer clips an aligned subset of the exact same geometry.
+    Shape envelope;
     for (const SliceLayer& layer : mesh.layers)
     {
         for (const SliceLayerPart& part : layer.parts)
         {
-            template_outline.push_back(part.getOwnInfillArea());
+            envelope.push_back(part.getOwnInfillArea());
         }
     }
-    if (template_outline.empty())
-    {
-        return;
-    }
-    // Union is required: stacking overlapping layers as raw polygons would make
-    // the even-odd fill rule cancel the overlaps into holes during probing.
-    template_outline = template_outline.unionPolygons();
-    if (template_outline.empty())
+    if (envelope.empty())
     {
         return;
     }
 
     // Use the same fill angle + scanline shift the per-layer truss would use, so
     // the columns sit on the familiar absolute grid. The angle must be constant
-    // for the truss to stack, so we always take the first infill angle.
+    // for the truss to align across layers, so we always take the first infill
+    // angle (per-layer angle cycling is intentionally ignored for the truss).
     const AngleDegrees fill_angle = mesh.infill_angles.empty() ? AngleDegrees(45) : mesh.infill_angles.front();
     const Point3LL mesh_middle = mesh.bounding_box.getMiddle();
     const Point2LL infill_origin(mesh_middle.x_ + mesh.settings.get<coord_t>("infill_offset_x"), mesh_middle.y_ + mesh.settings.get<coord_t>("infill_offset_y"));
@@ -565,7 +557,7 @@ void FffGcodeWriter::computeTrussInfillTemplate(SliceMeshStorage& mesh)
     }
     const coord_t pattern_shift = origin_shift + line_distance / 2;
 
-    mesh.truss_infill_template = TrussFill::generateTemplate(line_distance, template_outline, fill_angle, pattern_shift, false);
+    mesh.truss_infill_template = TrussFill::generateTemplate(line_distance, envelope, fill_angle, pattern_shift, false);
 }
 
 void FffGcodeWriter::setSupportAngles(SliceDataStorage& storage)

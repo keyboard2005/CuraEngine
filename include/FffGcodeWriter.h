@@ -189,16 +189,14 @@ private:
     void setInfillAndSkinAngles(SliceMeshStorage& mesh);
 
     /*!
-     * Pre-compute the shared saw-tooth template for TRUSS infill.
+     * Pre-compute the shared, layer-aligned saw-tooth template for TRUSS infill.
      *
-     * Builds one complete triangular saw-tooth (in world coordinates) from the
-     * cross-layer envelope - the union of every layer's infill area - so that in
-     * every vertical column the template reaches the furthest wall any layer has
-     * there. Every layer later clips this single template to its own contour, so
-     * the triangles line up perfectly from layer to layer and no layer ends up
-     * with a triangle tip stranded far from its wall. Only the template (the full
-     * envelope) needs to be fully connected. Does nothing when the infill pattern
-     * isn't TRUSS.
+     * Builds one regular triangular wave (in world coordinates) sized to the
+     * cross-layer envelope (the bounding box of every layer's infill area) and
+     * anchored to the absolute infill grid. Every layer later clips this single
+     * template to its own contour, so the triangles have the same angle and
+     * position on every layer - only their lengths differ. Does nothing when the
+     * infill pattern isn't TRUSS.
      *
      * \param mesh The mesh for which to compute the truss template.
      */

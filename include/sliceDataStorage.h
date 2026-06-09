@@ -324,7 +324,7 @@ public:
 
     std::shared_ptr<LightningGenerator> lightning_generator; //!< Pre-computed structure for Lightning type infill
 
-    OpenLinesSet truss_infill_template; //!< Pre-computed full saw-tooth template (world coords) for TRUSS infill, built once from the cross-layer envelope and clipped per layer.
+    OpenLinesSet truss_infill_template; //!< Shared regular triangular-wave template (world coords) for TRUSS infill, built once and clipped per layer so the pattern aligns across layers.
 
     RetractionAndWipeConfig retraction_wipe_config; //!< Per-Object retraction and wipe settings.
 
