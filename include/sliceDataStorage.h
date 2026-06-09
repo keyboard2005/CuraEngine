@@ -324,6 +324,8 @@ public:
 
     std::shared_ptr<LightningGenerator> lightning_generator; //!< Pre-computed structure for Lightning type infill
 
+    OpenLinesSet truss_infill_template; //!< Pre-computed full saw-tooth template (world coords) for TRUSS infill, built once from the largest layer and clipped per layer.
+
     RetractionAndWipeConfig retraction_wipe_config; //!< Per-Object retraction and wipe settings.
 
     /*!

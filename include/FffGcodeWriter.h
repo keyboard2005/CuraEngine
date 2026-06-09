@@ -189,6 +189,19 @@ private:
     void setInfillAndSkinAngles(SliceMeshStorage& mesh);
 
     /*!
+     * Pre-compute the shared saw-tooth template for TRUSS infill.
+     *
+     * Finds the layer with the largest infill cross-section and builds one
+     * complete triangular saw-tooth from it (in world coordinates). Every layer
+     * later clips this single template to its own contour, so the triangles line
+     * up perfectly from layer to layer and only the template layer needs to be
+     * fully connected. Does nothing when the infill pattern isn't TRUSS.
+     *
+     * \param mesh The mesh for which to compute the truss template.
+     */
+    void computeTrussInfillTemplate(SliceMeshStorage& mesh);
+
+    /*!
      * Set the support and interface infill angles in the SliceDataStorage.
      *
      * Default angles depend on which pattern it's using and in certain patterns it

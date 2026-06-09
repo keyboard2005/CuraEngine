@@ -31,6 +31,7 @@
 #include "geometry/OpenPolyline.h"
 #include "geometry/PointMatrix.h"
 #include "infill.h"
+#include "infill/TrussFill.h"
 #include "progress/Progress.h"
 #include "raft.h"
 #include "utils/Simplify.h" //Removing micro-segments created by offsetting.
@@ -133,6 +134,7 @@ void FffGcodeWriter::writeGCode(SliceDataStorage& storage, TimeKeeper& time_keep
         total_layers = std::max(total_layers, mesh_layer_num);
 
         setInfillAndSkinAngles(mesh);
+        computeTrussInfillTemplate(mesh);
     }
 
     setSupportAngles(storage);
@@ -507,6 +509,63 @@ void FffGcodeWriter::setInfillAndSkinAngles(SliceMeshStorage& mesh)
             mesh.skin_angles.push_back(135);
         }
     }
+}
+
+void FffGcodeWriter::computeTrussInfillTemplate(SliceMeshStorage& mesh)
+{
+    mesh.truss_infill_template.clear();
+    if (mesh.settings.get<EFillMethod>("infill_pattern") != EFillMethod::TRUSS)
+    {
+        return;
+    }
+    const coord_t line_distance = mesh.settings.get<coord_t>("infill_line_distance");
+    if (line_distance <= 0 || mesh.layers.empty())
+    {
+        return;
+    }
+
+    // Find the layer with the largest total infill area. That one becomes the
+    // complete saw-tooth template; every other layer clips a subset of it.
+    double best_area = 0.0;
+    Shape template_outline;
+    for (const SliceLayer& layer : mesh.layers)
+    {
+        Shape layer_infill;
+        for (const SliceLayerPart& part : layer.parts)
+        {
+            layer_infill.push_back(part.getOwnInfillArea());
+        }
+        if (layer_infill.empty())
+        {
+            continue;
+        }
+        const double area = std::abs(layer_infill.area());
+        if (area > best_area)
+        {
+            best_area = area;
+            template_outline = std::move(layer_infill);
+        }
+    }
+    if (template_outline.empty())
+    {
+        return;
+    }
+
+    // Use the same fill angle + scanline shift the per-layer truss would use, so
+    // the columns sit on the familiar absolute grid. The angle must be constant
+    // for the truss to stack, so we always take the first infill angle.
+    const AngleDegrees fill_angle = mesh.infill_angles.empty() ? AngleDegrees(45) : mesh.infill_angles.front();
+    const Point3LL mesh_middle = mesh.bounding_box.getMiddle();
+    const Point2LL infill_origin(mesh_middle.x_ + mesh.settings.get<coord_t>("infill_offset_x"), mesh_middle.y_ + mesh.settings.get<coord_t>("infill_offset_y"));
+    coord_t origin_shift = 0;
+    if (infill_origin.X != 0 || infill_origin.Y != 0)
+    {
+        const double rotation_rads = static_cast<double>(fill_angle) * std::numbers::pi / 180.0;
+        origin_shift = static_cast<coord_t>(infill_origin.X * std::cos(rotation_rads) - infill_origin.Y * std::sin(rotation_rads));
+    }
+    const coord_t pattern_shift = origin_shift + line_distance / 2;
+
+    mesh.truss_infill_template = TrussFill::generateTemplate(line_distance, template_outline, fill_angle, pattern_shift, false);
 }
 
 void FffGcodeWriter::setSupportAngles(SliceDataStorage& storage)

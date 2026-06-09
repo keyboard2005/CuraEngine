@@ -323,11 +323,21 @@ void Infill::_generate(
         break;
     case EFillMethod::TRUSS:
     {
-        // Use the exact same scanline shift as the zig-zag infill so the truss
-        // lands on the identical absolute grid (and thus the same XY on every
-        // layer): infill-origin offset + the global shift, like generateLinearBasedInfill.
-        const coord_t truss_shift = getShiftOffsetFromInfillOriginAndRotation(fill_angle_) + shift_;
-        TrussFill::generateTrussInfill(result_lines, line_distance_, inner_contour_, fill_angle_, truss_shift, false);
+        // Prefer the shared cross-layer template (built once from the largest
+        // layer) so every layer prints an aligned subset of the same saw-tooth.
+        if (mesh != nullptr && ! mesh->truss_infill_template.empty())
+        {
+            TrussFill::clipToOutline(result_lines, mesh->truss_infill_template, inner_contour_);
+        }
+        else
+        {
+            // Fallback (e.g. no mesh context): build a per-layer template. Use the
+            // exact same scanline shift as the zig-zag infill so the truss lands on
+            // the identical absolute grid: infill-origin offset + the global shift,
+            // like generateLinearBasedInfill.
+            const coord_t truss_shift = getShiftOffsetFromInfillOriginAndRotation(fill_angle_) + shift_;
+            TrussFill::generateTrussInfill(result_lines, line_distance_, inner_contour_, fill_angle_, truss_shift, false);
+        }
         break;
     }
     case EFillMethod::PLUGIN:
