@@ -36,9 +36,11 @@ class Shape;
  * world coordinates; every layer then merely clips that shared template to its
  * own contour (\ref clipToOutline).
  *
- * The triangle size follows from the equilateral rule: with the wave spanning
- * the part wall-to-wall, the apex spacing is fixed at width / sqrt(3), so the
- * infill line distance setting does not apply to this pattern.
+ * The triangle WIDTH is controlled by the infill line distance (derived from
+ * the infill density setting): the apex spacing - half the triangle base - is
+ * the line distance, so a denser infill gives narrower triangles. When no line
+ * distance is given (zero), the equilateral rule sizes the triangles instead:
+ * the apex spacing is then wall width / sqrt(3).
  */
 class TrussFill
 {
@@ -60,9 +62,12 @@ public:
      *                         layer).
      * \param fill_angle       Fallback orientation (degrees) for degenerate
      *                         parts whose own orientation cannot be determined.
+     * \param line_distance    Apex spacing (= half the triangle base) derived
+     *                         from the infill density; 0 means "use the
+     *                         equilateral rule" (spacing = width / sqrt(3)).
      * \return The truss waves as open polylines in world coordinates.
      */
-    static OpenLinesSet generateTemplate(const Shape& template_outline, double fill_angle);
+    static OpenLinesSet generateTemplate(const Shape& template_outline, double fill_angle, coord_t line_distance = 0);
 
     /*!
      * \brief Clip a pre-built template to one layer's contour and emit the lines.
@@ -87,7 +92,7 @@ public:
      * that this fallback is NOT layer-aligned, since it sizes the waves from the
      * single outline it is given.
      */
-    static void generateTrussInfill(OpenLinesSet& result_lines, const Shape& in_outline, double fill_angle);
+    static void generateTrussInfill(OpenLinesSet& result_lines, const Shape& in_outline, double fill_angle, coord_t line_distance = 0);
 };
 
 } // namespace cura

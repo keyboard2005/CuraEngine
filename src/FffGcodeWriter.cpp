@@ -544,7 +544,10 @@ void FffGcodeWriter::computeTrussInfillTemplate(SliceMeshStorage& mesh)
     // The wave orientation is derived per part from the part's own geometry; the
     // configured infill angle only serves as a fallback for degenerate parts.
     const AngleDegrees fill_angle = mesh.infill_angles.empty() ? AngleDegrees(45) : mesh.infill_angles.front();
-    mesh.truss_infill_template = TrussFill::generateTemplate(envelope, static_cast<double>(fill_angle));
+    // The infill line distance (derived from the infill density setting)
+    // controls the triangle width: denser infill = narrower triangles.
+    const coord_t line_distance = mesh.settings.get<coord_t>("infill_line_distance");
+    mesh.truss_infill_template = TrussFill::generateTemplate(envelope, static_cast<double>(fill_angle), line_distance);
 }
 
 void FffGcodeWriter::setSupportAngles(SliceDataStorage& storage)

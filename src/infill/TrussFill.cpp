@@ -426,9 +426,10 @@ std::vector<std::vector<Point2LL>> findSpines(const SingleShape& outer_only, con
     return {};
 }
 
-//! One straight equilateral zig-zag spanning the part wall-to-wall, for solid
-//! (slab-like) parts.
-OpenLinesSet generateStraightWave(const SingleShape& part, const double orientation)
+//! One straight zig-zag spanning the part wall-to-wall, for solid (slab-like)
+//! parts. The apex spacing (half the triangle base) comes from the infill line
+//! distance when one is given, otherwise from the equilateral rule.
+OpenLinesSet generateStraightWave(const SingleShape& part, const double orientation, const double line_distance)
 {
     OpenLinesSet wave_lines;
     const PointMatrix rotation(orientation);
@@ -442,10 +443,12 @@ OpenLinesSet generateStraightWave(const SingleShape& part, const double orientat
         return wave_lines;
     }
 
-    // Equilateral triangles spanning the part: with the apexes on opposite
-    // walls (amplitude = height) the legs equal the base exactly when the apex
-    // spacing is height / sqrt(3).
-    const coord_t apex_spacing = std::max<coord_t>(1, std::llround(static_cast<double>(height) / std::numbers::sqrt3));
+    // The infill line distance (from the infill density setting) controls how
+    // wide each triangle is. Without it: equilateral triangles spanning the
+    // part - with the apexes on opposite walls (amplitude = height) the legs
+    // equal the base exactly when the apex spacing is height / sqrt(3).
+    const double ideal_spacing = line_distance > 0.0 ? line_distance : static_cast<double>(height) / std::numbers::sqrt3;
+    const coord_t apex_spacing = std::max<coord_t>(1, std::llround(ideal_spacing));
     // Center the apex columns so the single wave sits symmetrically in the
     // part; extend one apex past each end so clipping reaches every corner.
     const coord_t center_x = (box.min_.X + box.max_.X) / 2;
@@ -462,11 +465,13 @@ OpenLinesSet generateStraightWave(const SingleShape& part, const double orientat
     return wave_lines;
 }
 
-//! One open equilateral zig-zag following the spine of a wall-like part (e.g.
-//! an L or U profile): the apexes alternate between the two sides of the wall
-//! and the wave turns wherever the wall turns, so the triangle bisectors stay
-//! perpendicular to the walls.
-OpenLinesSet generateSpineWave(const SingleShape& part, const std::vector<Point2LL>& spine, const double wall_width)
+//! One open zig-zag following the spine of a wall-like part (e.g. an L or U
+//! profile): the apexes alternate between the two sides of the wall and the
+//! wave turns wherever the wall turns, so the triangle bisectors stay
+//! perpendicular to the walls. The apex spacing along the spine comes from the
+//! infill line distance when one is given (denser fill = narrower triangles),
+//! otherwise from the equilateral rule.
+OpenLinesSet generateSpineWave(const SingleShape& part, const std::vector<Point2LL>& spine, const double wall_width, const double line_distance)
 {
     OpenLinesSet wave_lines;
     const PathWalker walker(spine, /*closed=*/false);
@@ -497,15 +502,25 @@ OpenLinesSet generateSpineWave(const SingleShape& part, const std::vector<Point2
             wave.push_back(*apex);
         }
 
-        // Local wall width drives the equilateral spacing: apexes on opposite
-        // sides are width / sqrt(3) apart along the spine.
-        double local_width = wall_width;
-        if (hit_left.has_value() && hit_right.has_value())
+        if (line_distance > 0.0)
         {
-            local_width = std::hypot(static_cast<double>(hit_left->X - hit_right->X), static_cast<double>(hit_left->Y - hit_right->Y));
-            local_width = std::clamp(local_width, 0.25 * wall_width, 4.0 * wall_width);
+            // The infill line distance (from the infill density setting)
+            // controls how far apart the apexes are along the wall, i.e. how
+            // wide the triangles are.
+            t += line_distance;
         }
-        t += local_width / std::numbers::sqrt3;
+        else
+        {
+            // Equilateral fallback: the local wall width drives the spacing -
+            // apexes on opposite sides are width / sqrt(3) apart on the spine.
+            double local_width = wall_width;
+            if (hit_left.has_value() && hit_right.has_value())
+            {
+                local_width = std::hypot(static_cast<double>(hit_left->X - hit_right->X), static_cast<double>(hit_left->Y - hit_right->Y));
+                local_width = std::clamp(local_width, 0.25 * wall_width, 4.0 * wall_width);
+            }
+            t += local_width / std::numbers::sqrt3;
+        }
         left_side = ! left_side;
     }
     if (wave.size() < 2)
@@ -516,11 +531,13 @@ OpenLinesSet generateSpineWave(const SingleShape& part, const std::vector<Point2
     return wave_lines;
 }
 
-//! One closed equilateral zig-zag running around a shell-like part: the apexes
-//! alternate between the hole wall and the outer wall and the last point
-//! returns to the first, so the truss ring is connected head-to-tail. The
-//! triangle bisectors run across the wall, i.e. perpendicular to it.
-OpenLinesSet generateRingWave(const SingleShape& part, const Polygon& guide_hole)
+//! One closed zig-zag running around a shell-like part: the apexes alternate
+//! between the hole wall and the outer wall and the last point returns to the
+//! first, so the truss ring is connected head-to-tail. The triangle bisectors
+//! run across the wall, i.e. perpendicular to it. The triangle base along the
+//! ring comes from the infill line distance when one is given, otherwise from
+//! the equilateral rule.
+OpenLinesSet generateRingWave(const SingleShape& part, const Polygon& guide_hole, const double line_distance)
 {
     OpenLinesSet wave_lines;
     const Polygon& outer_wall = part.outerPolygon();
@@ -556,9 +573,11 @@ OpenLinesSet generateRingWave(const SingleShape& part, const Polygon& guide_hole
         return wave_lines;
     }
 
-    // Equilateral: the triangle base (along the hole wall) is 2 * w / sqrt(3).
-    // Use a whole number of triangles so the wave closes onto itself.
-    const double ideal_base = 2.0 * wall_width / std::numbers::sqrt3;
+    // The triangle base along the hole wall: twice the infill line distance
+    // when one is given (the line distance is the apex spacing, i.e. half the
+    // base), otherwise the equilateral base 2 * w / sqrt(3). Use a whole
+    // number of triangles so the wave closes onto itself.
+    const double ideal_base = line_distance > 0.0 ? 2.0 * line_distance : 2.0 * wall_width / std::numbers::sqrt3;
     const auto triangle_count = std::max<size_t>(3, static_cast<size_t>(std::llround(loop_length / ideal_base)));
     const double base = loop_length / static_cast<double>(triangle_count);
 
@@ -581,7 +600,7 @@ OpenLinesSet generateRingWave(const SingleShape& part, const Polygon& guide_hole
 //! Build the truss wave for one connected component and clip it to that
 //! component, so holes stay empty and the wave can never leak into a
 //! neighbouring part.
-void appendPartTruss(OpenLinesSet& template_lines, const SingleShape& part, const double fallback_angle)
+void appendPartTruss(OpenLinesSet& template_lines, const SingleShape& part, const double fallback_angle, const double line_distance)
 {
     if (part.empty())
     {
@@ -593,7 +612,7 @@ void appendPartTruss(OpenLinesSet& template_lines, const SingleShape& part, cons
     if (guide_hole != nullptr)
     {
         // Closed shell: ring wave around the hole.
-        wave = generateRingWave(part, *guide_hole);
+        wave = generateRingWave(part, *guide_hole, line_distance);
     }
     else
     {
@@ -620,13 +639,13 @@ void appendPartTruss(OpenLinesSet& template_lines, const SingleShape& part, cons
             {
                 // Rays are still cast against the full part (incl. holes), so
                 // apexes never jump across a hole.
-                wave.push_back(generateSpineWave(part, spine, wall_width));
+                wave.push_back(generateSpineWave(part, spine, wall_width, line_distance));
             }
         }
         if (wave.empty())
         {
             // Solid slab-like part: straight wave along the long axis.
-            wave = generateStraightWave(part, orientation);
+            wave = generateStraightWave(part, orientation, line_distance);
         }
     }
     if (wave.empty())
@@ -645,7 +664,7 @@ void appendPartTruss(OpenLinesSet& template_lines, const SingleShape& part, cons
 
 } // namespace
 
-OpenLinesSet TrussFill::generateTemplate(const Shape& template_outline, const double fill_angle)
+OpenLinesSet TrussFill::generateTemplate(const Shape& template_outline, const double fill_angle, const coord_t line_distance)
 {
     OpenLinesSet template_lines;
     if (template_outline.empty())
@@ -658,7 +677,7 @@ OpenLinesSet TrussFill::generateTemplate(const Shape& template_outline, const do
     // make up the cross-layer envelope merge into true connected components.
     for (const SingleShape& part : template_outline.unionPolygons().splitIntoParts())
     {
-        appendPartTruss(template_lines, part, fill_angle);
+        appendPartTruss(template_lines, part, fill_angle, static_cast<double>(line_distance));
     }
     return template_lines;
 }
@@ -687,11 +706,11 @@ void TrussFill::clipToOutline(OpenLinesSet& result_lines, const OpenLinesSet& te
     }
 }
 
-void TrussFill::generateTrussInfill(OpenLinesSet& result_lines, const Shape& in_outline, const double fill_angle)
+void TrussFill::generateTrussInfill(OpenLinesSet& result_lines, const Shape& in_outline, const double fill_angle, const coord_t line_distance)
 {
     // Per-layer fallback (NOT layer-aligned): build the per-part waves from this
     // layer's own outline. The waves come back already clipped to their parts.
-    result_lines.push_back(generateTemplate(in_outline, fill_angle));
+    result_lines.push_back(generateTemplate(in_outline, fill_angle, line_distance));
 }
 
 } // namespace cura

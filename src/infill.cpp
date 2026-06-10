@@ -333,7 +333,7 @@ void Infill::_generate(
         {
             // Fallback (e.g. no mesh context): per-layer, per-part waves built
             // from this layer's own outline; not layer-aligned.
-            TrussFill::generateTrussInfill(result_lines, inner_contour_, static_cast<double>(fill_angle_));
+            TrussFill::generateTrussInfill(result_lines, inner_contour_, static_cast<double>(fill_angle_), line_distance_);
         }
         break;
     }
