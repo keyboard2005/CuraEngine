@@ -324,7 +324,10 @@ public:
 
     std::shared_ptr<LightningGenerator> lightning_generator; //!< Pre-computed structure for Lightning type infill
 
-    OpenLinesSet truss_infill_template; //!< Shared regular triangular-wave template (world coords) for TRUSS infill, built once and clipped per layer so the pattern aligns across layers.
+    //! Per-layer TRUSS infill templates (world coords). Layers with a similar cross-section share one
+    //! template object (so their triangles align perfectly); a drastic cross-section change (e.g. a
+    //! base plate below thin walls) starts a new template shaped by that section's own geometry.
+    std::vector<std::shared_ptr<OpenLinesSet>> truss_infill_template_per_layer;
 
     RetractionAndWipeConfig retraction_wipe_config; //!< Per-Object retraction and wipe settings.
 

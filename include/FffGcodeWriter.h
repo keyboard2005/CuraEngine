@@ -189,16 +189,18 @@ private:
     void setInfillAndSkinAngles(SliceMeshStorage& mesh);
 
     /*!
-     * Pre-compute the shared, layer-aligned saw-tooth template for TRUSS infill.
+     * Pre-compute the layer-aligned triangle-wave templates for TRUSS infill.
      *
-     * Builds one regular triangular wave (in world coordinates) sized to the
-     * cross-layer envelope (the bounding box of every layer's infill area) and
-     * anchored to the absolute infill grid. Every layer later clips this single
-     * template to its own contour, so the triangles have the same angle and
-     * position on every layer - only their lengths differ. Does nothing when the
-     * infill pattern isn't TRUSS.
+     * Layers are grouped into bands of (near-)constant cross-section; each band
+     * gets one template (in world coordinates) built from the union of its
+     * layers' infill areas. Every layer later clips its band's template to its
+     * own contour, so the triangles have the same angle and position on all
+     * layers of the band - only their lengths differ. A drastic cross-section
+     * change (e.g. a base plate below thin walls) starts a new band, so the
+     * plate's slab wave never replaces the walls' spine waves. Does nothing
+     * when the infill pattern isn't TRUSS.
      *
-     * \param mesh The mesh for which to compute the truss template.
+     * \param mesh The mesh for which to compute the truss templates.
      */
     void computeTrussInfillTemplate(SliceMeshStorage& mesh);
 

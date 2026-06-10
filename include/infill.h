@@ -376,6 +376,7 @@ private:
         Shape& result_polygons,
         OpenLinesSet& result_lines,
         const Settings& settings,
+        int layer_idx,
         const std::shared_ptr<SierpinskiFillProvider>& cross_fill_pattern = nullptr,
         const std::shared_ptr<LightningLayer>& lightning_layer = nullptr,
         const SliceMeshStorage* mesh = nullptr);
