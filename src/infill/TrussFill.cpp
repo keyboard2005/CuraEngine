@@ -361,67 +361,69 @@ std::optional<std::pair<size_t, size_t>> findSliverCaps(const Polygon& outline, 
     return std::make_pair(first_cap, *second_cap);
 }
 
-//! Approximate the spine (center line) of a wall-like part by eroding it to a
-//! thin sliver and taking one side of the sliver's outline between its two end
-//! caps. The spine follows the wall around bends (L/U/S profiles).
-std::optional<std::vector<Point2LL>> findSpine(const SingleShape& part, const double wall_width)
+//! Approximate the spine(s) (center lines) of a wall-like part by eroding its
+//! OUTER boundary to a thin sliver and taking one side of each sliver piece's
+//! outline between its two end caps. The spine follows the wall around bends
+//! (L/U/S profiles). Holes are deliberately ignored here: they are clipping
+//! features, not part of the wall's skeleton - eroding them too would shred
+//! the sliver into fragments and lose most of the spine.
+std::vector<std::vector<Point2LL>> findSpines(const SingleShape& outer_only, const double wall_width)
 {
-    for (const double inset_factor : { 0.45, 0.35, 0.25 })
+    for (const double inset_factor : { 0.45, 0.35, 0.25, 0.15 })
     {
         const coord_t inset = std::llround(inset_factor * wall_width);
         if (inset <= 0)
         {
             break;
         }
-        const Shape sliver = part.offset(-inset);
+        const Shape sliver = outer_only.offset(-inset);
         if (sliver.empty())
         {
             continue;
         }
 
-        const std::vector<SingleShape> sliver_parts = sliver.splitIntoParts();
-        const Polygon* outline = nullptr;
-        double largest_area = 0.0;
-        for (const SingleShape& sliver_part : sliver_parts)
+        // The wall may genuinely pinch and split the sliver; fill along EVERY
+        // sufficiently long piece instead of only the largest one, so no
+        // section of the wall is left empty.
+        std::vector<std::vector<Point2LL>> spines;
+        for (const SingleShape& sliver_part : sliver.splitIntoParts())
         {
             if (sliver_part.empty())
             {
                 continue;
             }
-            const double area = std::abs(sliver_part.outerPolygon().area());
-            if (area > largest_area)
+            const Polygon& outline = sliver_part.outerPolygon();
+            if (loopLength(outline) < 4.0 * wall_width)
             {
-                largest_area = area;
-                outline = &sliver_part.outerPolygon();
+                continue; // noise fragment, too short to carry triangles
+            }
+            const auto caps = findSliverCaps(outline, wall_width);
+            if (! caps.has_value())
+            {
+                continue;
+            }
+
+            std::vector<Point2LL> spine;
+            const size_t count = outline.size();
+            for (size_t i = caps->first;; i = (i + 1) % count)
+            {
+                spine.push_back(outline[i]);
+                if (i == caps->second)
+                {
+                    break;
+                }
+            }
+            if (spine.size() >= 2)
+            {
+                spines.push_back(std::move(spine));
             }
         }
-        if (outline == nullptr)
+        if (! spines.empty())
         {
-            continue;
-        }
-
-        const auto caps = findSliverCaps(*outline, wall_width);
-        if (! caps.has_value())
-        {
-            continue;
-        }
-
-        std::vector<Point2LL> spine;
-        const size_t count = outline->size();
-        for (size_t i = caps->first;; i = (i + 1) % count)
-        {
-            spine.push_back((*outline)[i]);
-            if (i == caps->second)
-            {
-                break;
-            }
-        }
-        if (spine.size() >= 2)
-        {
-            return spine;
+            return spines;
         }
     }
-    return std::nullopt;
+    return {};
 }
 
 //! One straight equilateral zig-zag spanning the part wall-to-wall, for solid
@@ -596,7 +598,13 @@ void appendPartTruss(OpenLinesSet& template_lines, const SingleShape& part, cons
     else
     {
         const double orientation = findPartOrientation(part, fallback_angle);
-        const double wall_width = estimateWallWidth(part);
+
+        // The wall width is estimated from the OUTER boundary only: holes are
+        // clipping features and must not make the wall look thinner than it is
+        // (a wall full of window cut-outs is still the same wall).
+        SingleShape outer_only;
+        outer_only.push_back(part.outerPolygon());
+        const double wall_width = estimateWallWidth(outer_only);
 
         // Wall-like part (thin wall bent into an L/U/S/... profile): the short
         // side of the bounding rectangle is much larger than the wall width, so
@@ -608,10 +616,11 @@ void appendPartTruss(OpenLinesSet& template_lines, const SingleShape& part, cons
         const coord_t short_side = std::min(box.max_.X - box.min_.X, box.max_.Y - box.min_.Y);
         if (wall_width > 0.0 && static_cast<double>(short_side) > wall_like_factor * wall_width)
         {
-            const std::optional<std::vector<Point2LL>> spine = findSpine(part, wall_width);
-            if (spine.has_value())
+            for (const std::vector<Point2LL>& spine : findSpines(outer_only, wall_width))
             {
-                wave = generateSpineWave(part, *spine, wall_width);
+                // Rays are still cast against the full part (incl. holes), so
+                // apexes never jump across a hole.
+                wave.push_back(generateSpineWave(part, spine, wall_width));
             }
         }
         if (wave.empty())
