@@ -184,7 +184,7 @@ void Infill::generate(
         Shape generated_result_polygons;
         OpenLinesSet generated_result_lines;
 
-        _generate(toolpaths, generated_result_polygons, generated_result_lines, settings, layer_idx, cross_fill_provider, lightning_trees, mesh);
+        _generate(toolpaths, generated_result_polygons, generated_result_lines, settings, cross_fill_provider, lightning_trees, mesh);
 
         zig_zaggify_ = zig_zaggify_real;
         multiplyInfill(generated_result_polygons, generated_result_lines);
@@ -198,7 +198,7 @@ void Infill::generate(
         Shape generated_result_polygons;
         OpenLinesSet generated_result_lines;
 
-        _generate(toolpaths, generated_result_polygons, generated_result_lines, settings, layer_idx, cross_fill_provider, lightning_trees, mesh);
+        _generate(toolpaths, generated_result_polygons, generated_result_lines, settings, cross_fill_provider, lightning_trees, mesh);
 
         result_polygons.push_back(generated_result_polygons);
         result_lines.push_back(generated_result_lines);
@@ -256,7 +256,6 @@ void Infill::_generate(
     Shape& result_polygons,
     OpenLinesSet& result_lines,
     const Settings& settings,
-    int layer_idx,
     const std::shared_ptr<SierpinskiFillProvider>& cross_fill_provider,
     const std::shared_ptr<LightningLayer>& lightning_trees,
     const SliceMeshStorage* mesh)
@@ -324,16 +323,11 @@ void Infill::_generate(
         break;
     case EFillMethod::TRUSS:
     {
-        // Clip this layer's shared template (one per band of layers with a
-        // similar cross-section) so the triangles align across those layers.
-        const OpenLinesSet* layer_template = nullptr;
-        if (mesh != nullptr && layer_idx >= 0 && static_cast<size_t>(layer_idx) < mesh->truss_infill_template_per_layer.size())
+        // Clip the shared cross-layer template so every layer prints the same
+        // triangles at the same angle and position (only the lengths differ).
+        if (mesh != nullptr && ! mesh->truss_infill_template.empty())
         {
-            layer_template = mesh->truss_infill_template_per_layer[static_cast<size_t>(layer_idx)].get();
-        }
-        if (layer_template != nullptr && ! layer_template->empty())
-        {
-            TrussFill::clipToOutline(result_lines, *layer_template, inner_contour_);
+            TrussFill::clipToOutline(result_lines, mesh->truss_infill_template, inner_contour_);
         }
         else
         {

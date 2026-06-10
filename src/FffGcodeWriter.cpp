@@ -513,7 +513,7 @@ void FffGcodeWriter::setInfillAndSkinAngles(SliceMeshStorage& mesh)
 
 void FffGcodeWriter::computeTrussInfillTemplate(SliceMeshStorage& mesh)
 {
-    mesh.truss_infill_template_per_layer.clear();
+    mesh.truss_infill_template.clear();
     if (mesh.settings.get<EFillMethod>("infill_pattern") != EFillMethod::TRUSS)
     {
         return;
@@ -522,69 +522,29 @@ void FffGcodeWriter::computeTrussInfillTemplate(SliceMeshStorage& mesh)
     {
         return;
     }
-    mesh.truss_infill_template_per_layer.resize(mesh.layers.size());
+
+    // Collect every layer's infill area into one outline; generateTemplate
+    // unions this collection into the true cross-layer envelope and builds one
+    // independently oriented wave per connected component. Because the template
+    // covers every layer, each layer clips an aligned subset of the exact same
+    // geometry.
+    Shape envelope;
+    for (const SliceLayer& layer : mesh.layers)
+    {
+        for (const SliceLayerPart& part : layer.parts)
+        {
+            envelope.push_back(part.getOwnInfillArea());
+        }
+    }
+    if (envelope.empty())
+    {
+        return;
+    }
 
     // The wave orientation is derived per part from the part's own geometry; the
     // configured infill angle only serves as a fallback for degenerate parts.
     const AngleDegrees fill_angle = mesh.infill_angles.empty() ? AngleDegrees(45) : mesh.infill_angles.front();
-
-    std::vector<double> layer_areas(mesh.layers.size(), 0.0);
-    for (size_t layer_nr = 0; layer_nr < mesh.layers.size(); ++layer_nr)
-    {
-        for (const SliceLayerPart& part : mesh.layers[layer_nr].parts)
-        {
-            for (const Polygon& polygon : part.getOwnInfillArea())
-            {
-                layer_areas[layer_nr] += polygon.area(); // holes count negative
-            }
-        }
-    }
-
-    // Layers are grouped into bands of (near-)constant cross-section; each band
-    // gets its own template, shared by all its layers so their triangles align
-    // perfectly. A drastic area jump between consecutive layers (e.g. a base
-    // plate below thin walls) starts a new band: the plate gets a slab wave of
-    // its own instead of forcing one onto the walls (or vice versa). Gradual
-    // changes (tapered shapes) stay within one band.
-    constexpr double band_jump_factor = 2.0;
-    const auto flush_band = [&mesh, fill_angle](const size_t band_start, const size_t band_end)
-    {
-        Shape envelope;
-        for (size_t layer_nr = band_start; layer_nr < band_end; ++layer_nr)
-        {
-            for (const SliceLayerPart& part : mesh.layers[layer_nr].parts)
-            {
-                envelope.push_back(part.getOwnInfillArea());
-            }
-        }
-        if (envelope.empty())
-        {
-            return;
-        }
-        auto band_template = std::make_shared<OpenLinesSet>(TrussFill::generateTemplate(envelope, static_cast<double>(fill_angle)));
-        for (size_t layer_nr = band_start; layer_nr < band_end; ++layer_nr)
-        {
-            mesh.truss_infill_template_per_layer[layer_nr] = band_template;
-        }
-    };
-
-    size_t band_start = 0;
-    double previous_area = 0.0;
-    for (size_t layer_nr = 0; layer_nr < mesh.layers.size(); ++layer_nr)
-    {
-        const double area = layer_areas[layer_nr];
-        if (area <= 0.0)
-        {
-            continue; // Layers without infill neither extend nor split a band.
-        }
-        if (previous_area > 0.0 && (area > band_jump_factor * previous_area || area < previous_area / band_jump_factor))
-        {
-            flush_band(band_start, layer_nr);
-            band_start = layer_nr;
-        }
-        previous_area = area;
-    }
-    flush_band(band_start, mesh.layers.size());
+    mesh.truss_infill_template = TrussFill::generateTemplate(envelope, static_cast<double>(fill_angle));
 }
 
 void FffGcodeWriter::setSupportAngles(SliceDataStorage& storage)
