@@ -4,14 +4,10 @@
 #include "infill/TrussFill.h"
 
 #include <algorithm>
-#include <atomic>
 #include <cmath>
-#include <cstdlib>
-#include <fstream>
 #include <limits>
 #include <numbers>
 #include <optional>
-#include <string>
 #include <vector>
 
 #include "geometry/OpenPolyline.h"
@@ -19,6 +15,7 @@
 #include "geometry/Shape.h"
 #include "geometry/SingleShape.h"
 #include "utils/AABB.h"
+#include "utils/polygonUtils.h"
 
 namespace cura
 {
@@ -42,72 +39,6 @@ constexpr double wall_like_factor = 2.5;
 //! Minimum turning (degrees) concentrated in one spot of an eroded sliver for
 //! that spot to count as a wall end cap.
 constexpr double cap_turn_threshold = 120.0;
-
-//! Debug aid (active when TRUSS_DEBUG_SVG points to a directory): dump a set of
-//! shapes/lines as one SVG so intermediate skeleton stages can be inspected.
-void debugDumpStage(const std::string& tag, const std::vector<std::pair<const Shape*, const char*>>& shapes, const OpenLinesSet* lines = nullptr)
-{
-    const char* debug_dir = std::getenv("TRUSS_DEBUG_SVG");
-    if (debug_dir == nullptr)
-    {
-        return;
-    }
-    static std::atomic<int> stage_counter{ 0 };
-    AABB bounds;
-    for (const auto& [shape, color] : shapes)
-    {
-        for (const Polygon& polygon : *shape)
-        {
-            for (const Point2LL& point : polygon)
-            {
-                bounds.include(point);
-            }
-        }
-    }
-    if (bounds.min_.X > bounds.max_.X)
-    {
-        return;
-    }
-    const double scale = 0.01;
-    const double pad = 20.0;
-    const double height = (bounds.max_.Y - bounds.min_.Y) * scale + 2 * pad;
-    const auto tx = [&](const coord_t x)
-    {
-        return (x - bounds.min_.X) * scale + pad;
-    };
-    const auto ty = [&](const coord_t y)
-    {
-        return height - ((y - bounds.min_.Y) * scale + pad);
-    };
-    std::ofstream svg(std::string(debug_dir) + "/truss_stage_" + std::to_string(stage_counter++) + "_" + tag + ".svg");
-    svg << "<svg xmlns='http://www.w3.org/2000/svg' width='" << (bounds.max_.X - bounds.min_.X) * scale + 2 * pad << "' height='" << height << "'>\n";
-    svg << "<rect width='100%' height='100%' fill='white'/>\n";
-    for (const auto& [shape, color] : shapes)
-    {
-        for (const Polygon& polygon : *shape)
-        {
-            svg << "<polygon fill='none' stroke='" << color << "' stroke-width='1' points='";
-            for (const Point2LL& point : polygon)
-            {
-                svg << tx(point.X) << "," << ty(point.Y) << " ";
-            }
-            svg << "'/>\n";
-        }
-    }
-    if (lines != nullptr)
-    {
-        for (const OpenPolyline& line : *lines)
-        {
-            svg << "<polyline fill='none' stroke='blue' stroke-width='1.5' points='";
-            for (const Point2LL& point : line)
-            {
-                svg << tx(point.X) << "," << ty(point.Y) << " ";
-            }
-            svg << "'/>\n";
-        }
-    }
-    svg << "</svg>\n";
-}
 
 //! Walks a path by arc length, so apexes can be placed at exact distances along
 //! it. Supports both closed loops (wrap-around) and open spines (clamped).
@@ -430,6 +361,71 @@ std::optional<std::pair<size_t, size_t>> findSliverCaps(const Polygon& outline, 
     return std::make_pair(first_cap, *second_cap);
 }
 
+//! Approximate the spine(s) (center lines) of a wall-like part by eroding its
+//! OUTER boundary to a thin sliver and taking one side of each sliver piece's
+//! outline between its two end caps. The spine follows the wall around bends
+//! (L/U/S profiles). Holes are deliberately ignored here: they are clipping
+//! features, not part of the wall's skeleton - eroding them too would shred
+//! the sliver into fragments and lose most of the spine.
+std::vector<std::vector<Point2LL>> findSpines(const SingleShape& outer_only, const double wall_width)
+{
+    for (const double inset_factor : { 0.45, 0.35, 0.25, 0.15 })
+    {
+        const coord_t inset = std::llround(inset_factor * wall_width);
+        if (inset <= 0)
+        {
+            break;
+        }
+        const Shape sliver = outer_only.offset(-inset);
+        if (sliver.empty())
+        {
+            continue;
+        }
+
+        // The wall may genuinely pinch and split the sliver; fill along EVERY
+        // sufficiently long piece instead of only the largest one, so no
+        // section of the wall is left empty.
+        std::vector<std::vector<Point2LL>> spines;
+        for (const SingleShape& sliver_part : sliver.splitIntoParts())
+        {
+            if (sliver_part.empty())
+            {
+                continue;
+            }
+            const Polygon& outline = sliver_part.outerPolygon();
+            if (loopLength(outline) < 4.0 * wall_width)
+            {
+                continue; // noise fragment, too short to carry triangles
+            }
+            const auto caps = findSliverCaps(outline, wall_width);
+            if (! caps.has_value())
+            {
+                continue;
+            }
+
+            std::vector<Point2LL> spine;
+            const size_t count = outline.size();
+            for (size_t i = caps->first;; i = (i + 1) % count)
+            {
+                spine.push_back(outline[i]);
+                if (i == caps->second)
+                {
+                    break;
+                }
+            }
+            if (spine.size() >= 2)
+            {
+                spines.push_back(std::move(spine));
+            }
+        }
+        if (! spines.empty())
+        {
+            return spines;
+        }
+    }
+    return {};
+}
+
 //! One straight equilateral zig-zag spanning the part wall-to-wall, for solid
 //! (slab-like) parts.
 OpenLinesSet generateStraightWave(const SingleShape& part, const double orientation)
@@ -479,11 +475,7 @@ OpenLinesSet generateSpineWave(const SingleShape& part, const std::vector<Point2
     {
         return wave_lines;
     }
-    // Keep the casts short: around corners the nominal normal can point ALONG
-    // the other leg of the wall, and a long ray would hit a far-away wall (e.g.
-    // the other leg's end), wrecking the wave. A miss falls back to the spine
-    // point itself, which keeps the wave local.
-    const double cast_range = 2.5 * wall_width;
+    const double cast_range = 8.0 * wall_width;
 
     OpenPolyline wave;
     bool left_side = true;
@@ -495,27 +487,23 @@ OpenLinesSet generateSpineWave(const SingleShape& part, const std::vector<Point2
         const auto [nx, ny] = walker.normalAt(t);
         if (nx == 0.0 && ny == 0.0)
         {
-            // Degenerate (zero-length) spine segment: step past it.
-            t += 0.5 * wall_width / std::numbers::sqrt3;
-            continue;
+            break;
         }
         const std::optional<Point2LL> hit_left = castToWall(part, on_spine, nx, ny, cast_range);
         const std::optional<Point2LL> hit_right = castToWall(part, on_spine, -nx, -ny, cast_range);
-        // NEVER skip an apex: a skipped apex desynchronizes the left/right
-        // alternation and creates long stray segments (which then cross
-        // concave corners or holes and get chopped). When the cast fails, the
-        // spine point itself (inside the wall) keeps the wave local and intact.
         const std::optional<Point2LL>& apex = left_side ? hit_left : hit_right;
-        wave.push_back(apex.value_or(on_spine));
+        if (apex.has_value())
+        {
+            wave.push_back(*apex);
+        }
 
         // Local wall width drives the equilateral spacing: apexes on opposite
-        // sides are width / sqrt(3) apart along the spine. The upper clamp
-        // keeps the steps sane where a cast shoots far along a corner diagonal.
+        // sides are width / sqrt(3) apart along the spine.
         double local_width = wall_width;
         if (hit_left.has_value() && hit_right.has_value())
         {
             local_width = std::hypot(static_cast<double>(hit_left->X - hit_right->X), static_cast<double>(hit_left->Y - hit_right->Y));
-            local_width = std::clamp(local_width, 0.25 * wall_width, 2.0 * wall_width);
+            local_width = std::clamp(local_width, 0.25 * wall_width, 4.0 * wall_width);
         }
         t += local_width / std::numbers::sqrt3;
         left_side = ! left_side;
@@ -528,305 +516,66 @@ OpenLinesSet generateSpineWave(const SingleShape& part, const std::vector<Point2
     return wave_lines;
 }
 
-//! One CLOSED equilateral zig-zag running along a wall loop (e.g. the ring of
-//! an annulus or the wall around one hole of a wall network): the apexes
-//! alternate between the two sides of the wall and the last point returns to
-//! the first, so the truss ring is connected head-to-tail. The triangle
-//! bisectors run across the wall, i.e. perpendicular to it.
-OpenLinesSet generateLoopWave(const SingleShape& part, const Polygon& loop, const double wall_width)
+//! One closed equilateral zig-zag running around a shell-like part: the apexes
+//! alternate between the hole wall and the outer wall and the last point
+//! returns to the first, so the truss ring is connected head-to-tail. The
+//! triangle bisectors run across the wall, i.e. perpendicular to it.
+OpenLinesSet generateRingWave(const SingleShape& part, const Polygon& guide_hole)
 {
     OpenLinesSet wave_lines;
-    const PathWalker walker = PathWalker::fromPolygon(loop);
+    const Polygon& outer_wall = part.outerPolygon();
+    const PathWalker walker = PathWalker::fromPolygon(guide_hole);
     const double loop_length = walker.length();
-    if (loop_length <= 0.0 || wall_width <= 0.0)
+    if (loop_length <= 0.0 || outer_wall.size() < 3)
     {
         return wave_lines;
     }
-    // Short casts only: see generateSpineWave for the rationale.
-    const double cast_range = 2.5 * wall_width;
 
-    // Average wall width along the loop (measured straight across the wall)
-    // determines the equilateral triangle size.
+    // Average wall width between the hole and the outer wall determines the
+    // equilateral triangle size.
     constexpr size_t width_samples = 32;
     double width_sum = 0.0;
     size_t width_count = 0;
     for (size_t i = 0; i < width_samples; ++i)
     {
-        const double t = loop_length * static_cast<double>(i) / static_cast<double>(width_samples);
-        const Point2LL on_loop = walker.at(t);
-        const auto [nx, ny] = walker.normalAt(t);
-        const std::optional<Point2LL> hit_left = castToWall(part, on_loop, nx, ny, cast_range);
-        const std::optional<Point2LL> hit_right = castToWall(part, on_loop, -nx, -ny, cast_range);
-        if (hit_left.has_value() && hit_right.has_value())
+        const Point2LL on_hole = walker.at(loop_length * static_cast<double>(i) / static_cast<double>(width_samples));
+        const ClosestPointPolygon closest = PolygonUtils::findClosest(on_hole, outer_wall);
+        if (closest.isValid())
         {
-            width_sum += std::hypot(static_cast<double>(hit_left->X - hit_right->X), static_cast<double>(hit_left->Y - hit_right->Y));
+            width_sum += std::hypot(static_cast<double>(closest.location_.X - on_hole.X), static_cast<double>(closest.location_.Y - on_hole.Y));
             ++width_count;
         }
     }
-    const double local_width = width_count > 0 ? std::clamp(width_sum / static_cast<double>(width_count), 0.25 * wall_width, 4.0 * wall_width) : wall_width;
+    if (width_count == 0)
+    {
+        return wave_lines;
+    }
+    const double wall_width = width_sum / static_cast<double>(width_count);
+    if (wall_width <= 0.0)
+    {
+        return wave_lines;
+    }
 
-    // Equilateral: the triangle base (along the loop) is 2 * w / sqrt(3). Use a
-    // whole number of triangles so the wave closes onto itself.
-    const double ideal_base = 2.0 * local_width / std::numbers::sqrt3;
+    // Equilateral: the triangle base (along the hole wall) is 2 * w / sqrt(3).
+    // Use a whole number of triangles so the wave closes onto itself.
+    const double ideal_base = 2.0 * wall_width / std::numbers::sqrt3;
     const auto triangle_count = std::max<size_t>(3, static_cast<size_t>(std::llround(loop_length / ideal_base)));
     const double base = loop_length / static_cast<double>(triangle_count);
 
     OpenPolyline wave;
     wave.reserve(2 * triangle_count + 1);
+    const Point2LL first_apex = walker.at(0.0);
     for (size_t j = 0; j < triangle_count; ++j)
     {
-        // One apex on each side of the wall per triangle.
-        const double t_a = static_cast<double>(j) * base;
-        const Point2LL on_loop_a = walker.at(t_a);
-        const auto [nax, nay] = walker.normalAt(t_a);
-        const std::optional<Point2LL> apex_a = castToWall(part, on_loop_a, nax, nay, cast_range);
-        wave.push_back(apex_a.value_or(on_loop_a));
-
-        const double t_b = (static_cast<double>(j) + 0.5) * base;
-        const Point2LL on_loop_b = walker.at(t_b);
-        const auto [nbx, nby] = walker.normalAt(t_b);
-        const std::optional<Point2LL> apex_b = castToWall(part, on_loop_b, -nbx, -nby, cast_range);
-        wave.push_back(apex_b.value_or(on_loop_b));
+        // Inner apex on the hole wall, outer apex straight across the wall.
+        wave.push_back(walker.at(static_cast<double>(j) * base));
+        const Point2LL mid = walker.at((static_cast<double>(j) + 0.5) * base);
+        const ClosestPointPolygon outer_apex = PolygonUtils::findClosest(mid, outer_wall);
+        wave.push_back(outer_apex.isValid() ? outer_apex.location_ : mid);
     }
-    const Point2LL first_apex = wave.front();
     wave.push_back(first_apex); // head meets tail: a closed truss ring
     wave_lines.push_back(std::move(wave));
     return wave_lines;
-}
-
-//! Generate the waves for a wall skeleton: erode \p erode_shape to a thin
-//! sliver; every resulting piece is one wall run. Pieces with a hole are
-//! closed wall loops (around a hole of the part) and get a closed loop wave;
-//! thin pieces with two end caps are open wall branches and get an open spine
-//! wave; fat pieces are wide solid regions (legs, heads, ...) and get a
-//! straight wave of their own. Apexes are always ray-cast against the full
-//! \p part, so they land on the real walls.
-OpenLinesSet collectSkeletonWaves(const SingleShape& part, const Shape& erode_shape, const double wall_width, const double fallback_angle)
-{
-    OpenLinesSet waves;
-    for (const double inset_factor : { 0.40, 0.30, 0.20 })
-    {
-        const coord_t inset = std::llround(inset_factor * wall_width);
-        if (inset <= 0)
-        {
-            break;
-        }
-        Shape sliver = erode_shape.offset(-inset);
-        if (sliver.empty())
-        {
-            continue;
-        }
-
-        // Cut the skeleton apart at junctions, so every wall run between two
-        // junctions gets exactly one wave. Junctions (where three or more wall
-        // runs meet) are wider than the wall itself: a plain wall disappears
-        // when eroded by half its width, but a junction core survives a deeper
-        // erosion. Removing the (slightly expanded) cores from the sliver
-        // splits it into separate runs.
-        const Shape junction_cores = erode_shape.offset(-std::llround(0.65 * wall_width));
-        if (! junction_cores.empty())
-        {
-            sliver = sliver.difference(junction_cores.offset(std::llround(0.25 * wall_width)));
-        }
-        debugDumpStage(
-            "skeleton",
-            { { static_cast<const Shape*>(&part), "red" }, { &sliver, "green" }, { &junction_cores, "orange" } });
-        if (sliver.empty())
-        {
-            continue;
-        }
-
-        // The skeleton may consist of several runs (loops around holes, open
-        // branches like legs or tails, pinched-off sections); fill along EVERY
-        // sufficiently long piece so no section of the wall is left empty.
-        for (const SingleShape& sliver_part : sliver.splitIntoParts())
-        {
-            if (sliver_part.empty())
-            {
-                continue;
-            }
-            const Polygon& outline = sliver_part.outerPolygon();
-            if (loopLength(outline) < 2.5 * wall_width)
-            {
-                continue; // noise fragment, too short to carry triangles
-            }
-
-            if (sliver_part.size() > 1)
-            {
-                // The piece has holes: it is a thin closed ring (or several
-                // fused ones), i.e. wall loop(s). Guide one closed wave along
-                // each inner edge.
-                for (size_t hole_idx = 1; hole_idx < sliver_part.size(); ++hole_idx)
-                {
-                    waves.push_back(generateLoopWave(part, sliver_part[hole_idx], wall_width));
-                }
-                continue;
-            }
-
-            // A true wall run erodes to a THIN sliver (mean thickness well
-            // below the wall width); only those carry a spine wave. Anything
-            // fat is a junction blob or a wide solid region (a leg or head of
-            // a figurine) whose true fill width is larger than the wall width.
-            const double mean_thickness = 2.0 * std::abs(outline.area()) / loopLength(outline);
-            std::optional<std::pair<size_t, size_t>> caps;
-            if (mean_thickness <= 0.5 * wall_width)
-            {
-                caps = findSliverCaps(outline, wall_width);
-            }
-            if (caps.has_value())
-            {
-                std::vector<Point2LL> spine;
-                const size_t count = outline.size();
-                for (size_t i = caps->first;; i = (i + 1) % count)
-                {
-                    spine.push_back(outline[i]);
-                    if (i == caps->second)
-                    {
-                        break;
-                    }
-                }
-                if (spine.size() >= 2)
-                {
-                    waves.push_back(generateSpineWave(part, spine, wall_width));
-                }
-                continue;
-            }
-
-            // Wide region: grow the remnant back to (approximately) the full
-            // region it came from and give it a straight wave along its own
-            // long axis. Small junction blobs (the meeting points of wall
-            // runs) stay empty - the runs' waves already serve them.
-            if (std::abs(outline.area()) > wall_width * wall_width)
-            {
-                Shape region = sliver_part.offset(std::llround((inset_factor + 0.25) * wall_width), ClipperLib::jtRound);
-                region = region.intersection(part);
-                for (const SingleShape& region_part : region.splitIntoParts())
-                {
-                    const OpenLinesSet region_wave = generateStraightWave(region_part, findPartOrientation(region_part, fallback_angle));
-                    for (const OpenPolyline& segment : region_part.intersection(region_wave, /*restitch=*/true))
-                    {
-                        if (segment.size() >= 2)
-                        {
-                            waves.push_back(segment);
-                        }
-                    }
-                }
-            }
-        }
-        if (! waves.empty())
-        {
-            return waves;
-        }
-    }
-    return waves;
-}
-
-OpenLinesSet buildPartWave(const SingleShape& part, const double fallback_angle, const int depth, const double min_wall_width);
-
-//! Waves for the regions of \p part that no skeleton wave serves. Regions much
-//! wider than the typical wall (the legs, chest or head of a figurine whose
-//! body is otherwise a thin-wall network) disappear during the skeleton
-//! erosion - they look like junction cores - so they end up without any wave.
-//! Each such region is treated as a little part of its own (recursively, so a
-//! lower body with legs gets leg-following waves, not one diagonal slab wave).
-OpenLinesSet collectResidualWaves(const SingleShape& part, const OpenLinesSet& skeleton_waves, const double wall_width, const double fallback_angle, const int depth)
-{
-    OpenLinesSet waves;
-    // Each wave serves the wall band it runs through.
-    const Shape covered = skeleton_waves.offset(std::llround(0.5 * wall_width));
-    const Shape residual = part.difference(covered);
-    debugDumpStage("residual", { { static_cast<const Shape*>(&part), "red" }, { &covered, "gray" }, { &residual, "green" } }, &skeleton_waves);
-    // Junction-blob leftovers (~(w/2)^2 in area) stay empty; anything bigger -
-    // legs, heads, chests - deserves its own wave.
-    const double min_area = wall_width * wall_width;
-    for (const SingleShape& piece : residual.splitIntoParts())
-    {
-        if (piece.empty() || std::abs(piece.outerPolygon().area()) < min_area)
-        {
-            continue;
-        }
-        // The parent's wall width is the floor for the piece's triangle size,
-        // so a small leftover cannot degenerate into a dense micro-zigzag.
-        const OpenLinesSet piece_wave = buildPartWave(piece, fallback_angle, depth + 1, wall_width);
-        // Confine the wave to its own region (with a little overlap into the
-        // covered band so the patterns knit together), not the whole part.
-        for (const OpenPolyline& segment : piece.offset(std::llround(0.5 * wall_width)).intersection(piece_wave, /*restitch=*/true))
-        {
-            if (segment.size() >= 2)
-            {
-                waves.push_back(segment);
-            }
-        }
-    }
-    return waves;
-}
-
-//! Build the (unclipped) truss wave for one connected region: skeleton waves
-//! for wall-like geometry, plus recursive waves for the wide regions the
-//! skeleton misses, or a single straight wave for plain slabs.
-OpenLinesSet buildPartWave(const SingleShape& part, const double fallback_angle, const int depth, const double min_wall_width)
-{
-    OpenLinesSet wave;
-    if (part.empty())
-    {
-        return wave;
-    }
-
-    double wall_width = 0.0;
-    const double orientation = findPartOrientation(part, fallback_angle);
-    if (findGuideHole(part) != nullptr)
-    {
-        // Shell / wall network: the part is dominated by its hole(s), so the
-        // fill region is a network of walls between the outer wall and the hole
-        // walls. The wall width estimate with holes included (area / half the
-        // total perimeter) is exact for such networks. Erode the FULL part so
-        // the skeleton respects the holes: loops around holes get closed ring
-        // waves, open branches (legs, tails, ...) get open spine waves.
-        wall_width = std::max(estimateWallWidth(part), min_wall_width);
-        if (wall_width > 0.0)
-        {
-            wave = collectSkeletonWaves(part, part, wall_width, fallback_angle);
-        }
-    }
-    else
-    {
-        // The wall width is estimated from the OUTER boundary only: small holes
-        // are clipping features and must not make the wall look thinner than it
-        // is (a wall with a few window cut-outs is still the same wall).
-        SingleShape outer_only;
-        outer_only.push_back(part.outerPolygon());
-        wall_width = std::max(estimateWallWidth(outer_only), min_wall_width);
-
-        // Wall-like part (thin wall bent into an L/U/S/... profile): the short
-        // side of the bounding rectangle is much larger than the wall width, so
-        // a straight wave cannot follow the wall. Use spine-following waves.
-        // Recursive (residual) pieces always try the skeleton first: they are
-        // irregular by construction, so a straight slab wave rarely fits them.
-        const PointMatrix rotation(orientation);
-        Shape rotated = part;
-        rotated.applyMatrix(rotation);
-        const AABB box(rotated);
-        const coord_t short_side = std::min(box.max_.X - box.min_.X, box.max_.Y - box.min_.Y);
-        if (wall_width > 0.0 && (depth > 0 || static_cast<double>(short_side) > wall_like_factor * wall_width))
-        {
-            // Rays are still cast against the full part (incl. holes), so
-            // apexes never jump across a hole.
-            wave = collectSkeletonWaves(part, outer_only, wall_width, fallback_angle);
-        }
-    }
-    if (! wave.empty() && wall_width > 0.0 && depth < 3)
-    {
-        // Wide solid regions (legs, heads, ...) leave no skeleton sliver and
-        // therefore no wave; recursively give each of them waves of its own.
-        wave.push_back(collectResidualWaves(part, wave, wall_width, fallback_angle, depth));
-    }
-    if (wave.empty())
-    {
-        // Solid slab-like part (or skeleton extraction failed): straight wave
-        // along the long axis.
-        wave = generateStraightWave(part, orientation);
-    }
-    return wave;
 }
 
 //! Build the truss wave for one connected component and clip it to that
@@ -834,7 +583,52 @@ OpenLinesSet buildPartWave(const SingleShape& part, const double fallback_angle,
 //! neighbouring part.
 void appendPartTruss(OpenLinesSet& template_lines, const SingleShape& part, const double fallback_angle)
 {
-    const OpenLinesSet wave = buildPartWave(part, fallback_angle, 0, 0.0);
+    if (part.empty())
+    {
+        return;
+    }
+
+    OpenLinesSet wave;
+    const Polygon* guide_hole = findGuideHole(part);
+    if (guide_hole != nullptr)
+    {
+        // Closed shell: ring wave around the hole.
+        wave = generateRingWave(part, *guide_hole);
+    }
+    else
+    {
+        const double orientation = findPartOrientation(part, fallback_angle);
+
+        // The wall width is estimated from the OUTER boundary only: holes are
+        // clipping features and must not make the wall look thinner than it is
+        // (a wall full of window cut-outs is still the same wall).
+        SingleShape outer_only;
+        outer_only.push_back(part.outerPolygon());
+        const double wall_width = estimateWallWidth(outer_only);
+
+        // Wall-like part (thin wall bent into an L/U/S/... profile): the short
+        // side of the bounding rectangle is much larger than the wall width, so
+        // a straight wave cannot follow the wall. Use a spine-following wave.
+        const PointMatrix rotation(orientation);
+        Shape rotated = part;
+        rotated.applyMatrix(rotation);
+        const AABB box(rotated);
+        const coord_t short_side = std::min(box.max_.X - box.min_.X, box.max_.Y - box.min_.Y);
+        if (wall_width > 0.0 && static_cast<double>(short_side) > wall_like_factor * wall_width)
+        {
+            for (const std::vector<Point2LL>& spine : findSpines(outer_only, wall_width))
+            {
+                // Rays are still cast against the full part (incl. holes), so
+                // apexes never jump across a hole.
+                wave.push_back(generateSpineWave(part, spine, wall_width));
+            }
+        }
+        if (wave.empty())
+        {
+            // Solid slab-like part: straight wave along the long axis.
+            wave = generateStraightWave(part, orientation);
+        }
+    }
     if (wave.empty())
     {
         return;
@@ -862,52 +656,9 @@ OpenLinesSet TrussFill::generateTemplate(const Shape& template_outline, const do
     // Every connected component is treated as its own fill region with its own,
     // independently oriented wave. Union first so the per-layer outlines that
     // make up the cross-layer envelope merge into true connected components.
-    const Shape unioned = template_outline.unionPolygons();
-    for (const SingleShape& part : unioned.splitIntoParts())
+    for (const SingleShape& part : template_outline.unionPolygons().splitIntoParts())
     {
         appendPartTruss(template_lines, part, fill_angle);
-    }
-
-    // Debug aid: when TRUSS_DEBUG_SVG is set to a directory, dump the unioned
-    // template outline and the generated waves as an SVG there.
-    if (const char* debug_dir = std::getenv("TRUSS_DEBUG_SVG"); debug_dir != nullptr)
-    {
-        static std::atomic<int> dump_counter{ 0 };
-        const std::string path = std::string(debug_dir) + "/truss_template_" + std::to_string(dump_counter++) + ".svg";
-        const AABB bounds(unioned);
-        const double scale = 0.01; // 1 mm -> 10 px
-        const double pad = 20.0;
-        const double height = (bounds.max_.Y - bounds.min_.Y) * scale + 2 * pad;
-        const auto tx = [&](const coord_t x)
-        {
-            return (x - bounds.min_.X) * scale + pad;
-        };
-        const auto ty = [&](const coord_t y)
-        {
-            return height - ((y - bounds.min_.Y) * scale + pad);
-        };
-        std::ofstream svg(path);
-        svg << "<svg xmlns='http://www.w3.org/2000/svg' width='" << (bounds.max_.X - bounds.min_.X) * scale + 2 * pad << "' height='" << height << "'>\n";
-        svg << "<rect width='100%' height='100%' fill='white'/>\n";
-        for (const Polygon& polygon : unioned)
-        {
-            svg << "<polygon fill='none' stroke='red' stroke-width='1' points='";
-            for (const Point2LL& point : polygon)
-            {
-                svg << tx(point.X) << "," << ty(point.Y) << " ";
-            }
-            svg << "'/>\n";
-        }
-        for (const OpenPolyline& line : template_lines)
-        {
-            svg << "<polyline fill='none' stroke='blue' stroke-width='1.5' points='";
-            for (const Point2LL& point : line)
-            {
-                svg << tx(point.X) << "," << ty(point.Y) << " ";
-            }
-            svg << "'/>\n";
-        }
-        svg << "</svg>\n";
     }
     return template_lines;
 }
