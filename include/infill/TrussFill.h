@@ -23,8 +23,10 @@ class Shape;
  *     off by the outer wall; all interior nodes keep their exact XY.
  *  3. The triangle bisectors run as perpendicular to the walls as possible:
  *     shell-like parts (with a dominant hole) get a CLOSED ring wave whose
- *     apexes alternate between the hole wall and the outer wall; solid parts
- *     get a straight wave along the long axis of their minimum-area bounding
+ *     apexes alternate between the hole wall and the outer wall; thin bent
+ *     walls (L/U/S profiles) get an open wave that follows the wall's spine
+ *     and alternates between the wall's two sides; solid slab-like parts get
+ *     a straight wave along the long axis of their minimum-area bounding
  *     rectangle. Holes are never filled.
  *  4. Every connected component is its own fill region with its own,
  *     independently oriented wave.
