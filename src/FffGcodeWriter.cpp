@@ -518,17 +518,16 @@ void FffGcodeWriter::computeTrussInfillTemplate(SliceMeshStorage& mesh)
     {
         return;
     }
-    const coord_t line_distance = mesh.settings.get<coord_t>("infill_line_distance");
-    if (line_distance <= 0 || mesh.layers.empty())
+    if (mesh.layers.empty())
     {
         return;
     }
 
-    // Collect every layer's infill area into one outline. The template only needs
-    // this as a bounding box (the cross-layer envelope), so a plain collection is
-    // enough - no (expensive) polygon union is required. Sizing the wave from the
-    // envelope guarantees the single shared template covers every layer, so each
-    // layer clips an aligned subset of the exact same geometry.
+    // Collect every layer's infill area into one outline; generateTemplate
+    // unions this collection into the true cross-layer envelope and builds one
+    // independently oriented wave per connected component. Because the template
+    // covers every layer, each layer clips an aligned subset of the exact same
+    // geometry.
     Shape envelope;
     for (const SliceLayer& layer : mesh.layers)
     {
@@ -542,22 +541,10 @@ void FffGcodeWriter::computeTrussInfillTemplate(SliceMeshStorage& mesh)
         return;
     }
 
-    // Use the same fill angle + scanline shift the per-layer truss would use, so
-    // the columns sit on the familiar absolute grid. The angle must be constant
-    // for the truss to align across layers, so we always take the first infill
-    // angle (per-layer angle cycling is intentionally ignored for the truss).
+    // The wave orientation is derived per part from the part's own geometry; the
+    // configured infill angle only serves as a fallback for degenerate parts.
     const AngleDegrees fill_angle = mesh.infill_angles.empty() ? AngleDegrees(45) : mesh.infill_angles.front();
-    const Point3LL mesh_middle = mesh.bounding_box.getMiddle();
-    const Point2LL infill_origin(mesh_middle.x_ + mesh.settings.get<coord_t>("infill_offset_x"), mesh_middle.y_ + mesh.settings.get<coord_t>("infill_offset_y"));
-    coord_t origin_shift = 0;
-    if (infill_origin.X != 0 || infill_origin.Y != 0)
-    {
-        const double rotation_rads = static_cast<double>(fill_angle) * std::numbers::pi / 180.0;
-        origin_shift = static_cast<coord_t>(infill_origin.X * std::cos(rotation_rads) - infill_origin.Y * std::sin(rotation_rads));
-    }
-    const coord_t pattern_shift = origin_shift + line_distance / 2;
-
-    mesh.truss_infill_template = TrussFill::generateTemplate(line_distance, envelope, fill_angle, pattern_shift, false);
+    mesh.truss_infill_template = TrussFill::generateTemplate(envelope, static_cast<double>(fill_angle));
 }
 
 void FffGcodeWriter::setSupportAngles(SliceDataStorage& storage)

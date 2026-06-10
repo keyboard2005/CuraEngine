@@ -331,12 +331,9 @@ void Infill::_generate(
         }
         else
         {
-            // Fallback (e.g. no mesh context): per-layer wave, not layer-aligned.
-            // Use the exact same scanline shift as the zig-zag infill so the truss
-            // columns land on the identical absolute grid: infill-origin offset +
-            // the global shift, like generateLinearBasedInfill.
-            const coord_t truss_shift = getShiftOffsetFromInfillOriginAndRotation(fill_angle_) + shift_;
-            TrussFill::generateTrussInfill(result_lines, line_distance_, inner_contour_, fill_angle_, truss_shift, false);
+            // Fallback (e.g. no mesh context): per-layer, per-part waves built
+            // from this layer's own outline; not layer-aligned.
+            TrussFill::generateTrussInfill(result_lines, inner_contour_, static_cast<double>(fill_angle_));
         }
         break;
     }

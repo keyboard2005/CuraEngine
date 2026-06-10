@@ -15,59 +15,59 @@ class Shape;
 /*!
  * \brief Triangular truss infill pattern.
  *
- * Generates a continuous, regular zig-zag whose apexes form a row of triangles.
- * This is the lightweight-yet-stiff lattice commonly used in concrete /
- * large-format printing: little material, high structural strength.
+ * Fill rules:
+ *  1. Each fill region is filled with a SINGLE equilateral-triangle zig-zag
+ *     polyline whose apexes touch the walls; the layers are perfectly aligned
+ *     (same XY for every node on every layer).
+ *  2. When the cross-section changes between layers, only the apexes are cut
+ *     off by the outer wall; all interior nodes keep their exact XY.
+ *  3. The triangle bisectors run as perpendicular to the walls as possible:
+ *     shell-like parts (with a dominant hole) get a CLOSED ring wave whose
+ *     apexes alternate between the hole wall and the outer wall; solid parts
+ *     get a straight wave along the long axis of their minimum-area bounding
+ *     rectangle. Holes are never filled.
+ *  4. Every connected component is its own fill region with its own,
+ *     independently oriented wave.
  *
- * Layer alignment is the primary goal: every layer must print the SAME triangles
- * at the SAME angle and the SAME position. Only the line lengths may differ from
- * layer to layer (because each layer clips the pattern to its own contour).
+ * Layer alignment comes from building the whole pattern ONCE
+ * (\ref generateTemplate) from the cross-layer envelope and storing it in
+ * world coordinates; every layer then merely clips that shared template to its
+ * own contour (\ref clipToOutline).
  *
- * To guarantee that, the whole pattern is built ONCE (\ref generateTemplate) in
- * world coordinates and stored; every layer then merely clips that single shared
- * template to its own contour (\ref clipToOutline). The template is a regular
- * triangular wave: the apexes alternate between a flat top and a flat bottom
- * (the top/bottom of the cross-layer envelope), and the columns are anchored to
- * the absolute infill grid - <tt>col * line_distance + pattern_shift</tt>. A flat
- * top/bottom keeps every triangle identical (a single, constant angle), and
- * because the template is shared, the angle and position are identical on every
- * layer. Clipping cuts each leg at the walls, which is what keeps the triangles
- * sitting in sensible positions even on complex models, and skips interior
- * cut-outs.
+ * The triangle size follows from the equilateral rule: with the wave spanning
+ * the part wall-to-wall, the apex spacing is fixed at width / sqrt(3), so the
+ * infill line distance setting does not apply to this pattern.
  */
 class TrussFill
 {
 public:
     /*!
-     * \brief Build the complete regular triangular-wave template.
+     * \brief Build the complete truss template, one wave per connected part.
      *
-     * The columns are anchored to the absolute grid the built-in zig-zag uses
-     * (<tt>col * line_distance + pattern_shift</tt>) and the apexes alternate
-     * between the flat top and flat bottom of \p template_outline's bounding box,
-     * so the whole wave has a single constant angle. The result is returned in
-     * world coordinates (already un-rotated) and is NOT clipped, so callers can
-     * clip it per layer.
+     * \p template_outline is unioned and split into connected components.
+     * Shell-like components (dominant hole) get a closed equilateral ring wave
+     * between the hole wall and the outer wall; solid components get a straight
+     * equilateral wave along their minimum-area bounding rectangle. Each wave is
+     * clipped to its own component, so it cannot leak into neighbouring parts
+     * and holes stay empty. The result is returned in world coordinates so
+     * callers can clip it per layer.
      *
-     * \param line_distance   Horizontal spacing between consecutive apexes (µm).
-     *                        The triangle base equals twice this value, so the
-     *                        triangle width scales with the infill density.
-     * \param template_outline The outline to size the template from (typically
-     *                        the cross-layer envelope of every layer's infill
-     *                        area, so the template covers every layer).
-     * \param fill_angle      Orientation of the truss rows, in degrees.
-     * \param pattern_shift   The scanline shift (infill-origin offset + global
-     *                        shift), exactly as the zig-zag infill uses it.
-     * \param mirror          When true, flip the starting side.
-     * \return The regular triangular wave as an open polyline in world coords.
+     * \param template_outline The outline to build the template from (typically
+     *                         the collected cross-layer envelope of every
+     *                         layer's infill area, so the template covers every
+     *                         layer).
+     * \param fill_angle       Fallback orientation (degrees) for degenerate
+     *                         parts whose own orientation cannot be determined.
+     * \return The truss waves as open polylines in world coordinates.
      */
-    static OpenLinesSet generateTemplate(coord_t line_distance, const Shape& template_outline, double fill_angle, coord_t pattern_shift, bool mirror);
+    static OpenLinesSet generateTemplate(const Shape& template_outline, double fill_angle);
 
     /*!
      * \brief Clip a pre-built template to one layer's contour and emit the lines.
      *
      * Because every layer clips the exact same \p template_lines, the resulting
      * lines have the same angle and position on every layer; only their lengths
-     * differ.
+     * differ (apexes get cut off by smaller cross-sections).
      *
      * \param result_lines    Output: the truss line segments for this layer.
      * \param template_lines  The shared template from \ref generateTemplate
@@ -78,15 +78,14 @@ public:
     static void clipToOutline(OpenLinesSet& result_lines, const OpenLinesSet& template_lines, const Shape& in_outline);
 
     /*!
-     * \brief Convenience: build a template from \p in_outline and clip it back
-     *        to the same outline.
+     * \brief Convenience: build the per-part waves from \p in_outline directly.
      *
      * Used as a per-layer fallback when no shared cross-layer template is
      * available (e.g. when the infill is generated without a mesh context). Note
-     * that this fallback is NOT layer-aligned, since it sizes the wave from the
+     * that this fallback is NOT layer-aligned, since it sizes the waves from the
      * single outline it is given.
      */
-    static void generateTrussInfill(OpenLinesSet& result_lines, coord_t line_distance, const Shape& in_outline, double fill_angle, coord_t pattern_shift, bool mirror);
+    static void generateTrussInfill(OpenLinesSet& result_lines, const Shape& in_outline, double fill_angle);
 };
 
 } // namespace cura
